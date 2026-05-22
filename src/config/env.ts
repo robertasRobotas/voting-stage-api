@@ -7,13 +7,9 @@ const envSchema = z.object({
   PORT: z.coerce.number().default(4000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   MONGODB_URI: z.string().min(1),
-  // Firebase Admin SDK is optional during early development — server boots
-  // without it so the frontend can be exercised. Any endpoint that needs to
-  // verify a Firebase ID token will return AUTH_NOT_CONFIGURED until all
-  // three values are set. Drop in a service-account JSON to enable.
+  // Optional in dev so the server can boot without auth wired up. Auth-required
+  // routes return AUTH_NOT_CONFIGURED until this is set.
   FIREBASE_PROJECT_ID: z.string().optional(),
-  FIREBASE_CLIENT_EMAIL: z.string().optional(),
-  FIREBASE_PRIVATE_KEY: z.string().optional(),
   CORS_ORIGIN: z.string().default('*'),
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
   APP_URL: z.string().default('http://localhost:3000'),

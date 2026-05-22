@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { firebaseConfigured, getFirebaseAuth } from '../../config/firebase.js';
+import { firebaseConfigured, verifyFirebaseIdToken } from '../../config/firebase.js';
 import { UnauthorizedError } from '../errors/index.js';
 import { logger } from '../../config/logger.js';
 import * as userRepository from '../../modules/auth/user.repository.js';
@@ -14,6 +14,45 @@ declare global {
   }
 }
 
+/**
+ * Pull email out of the ID token. Firebase's top-level `email` claim is
+ * usually present for Google sign-in, but for some federated providers it
+ * lives under `firebase.identities` instead. Fall back to a placeholder so we
+ * can still persist the user record.
+ */
+function extractEmail(claims: Awaited<ReturnType<typeof verifyFirebaseIdToken>>): string {
+  if (claims.email) return claims.email;
+  const identities = (claims.raw.firebase as { identities?: Record<string, unknown> } | undefined)
+    ?.identities;
+  if (identities) {
+    for (const value of Object.values(identities)) {
+      if (Array.isArray(value)) {
+        const found = value.find((v) => typeof v === 'string' && v.includes('@'));
+        if (typeof found === 'string') return found;
+      }
+    }
+  }
+  return `${claims.uid}@noemail.firebase`;
+}
+
+async function attachUserFromToken(req: Request, idToken: string): Promise<void> {
+  const claims = await verifyFirebaseIdToken(idToken);
+  const email = extractEmail(claims);
+  const user = await userRepository.findOrCreateByFirebase({
+    firebaseUid: claims.uid,
+    email,
+    displayName: claims.name,
+    photoUrl: claims.picture,
+  });
+  req.user = {
+    userId: user._id.toString(),
+    email: user.email,
+    firebaseUid: user.firebaseUid,
+    displayName: user.displayName,
+    photoUrl: user.photoUrl,
+  };
+}
+
 export async function authMiddleware(
   req: Request,
   _res: Response,
@@ -22,61 +61,30 @@ export async function authMiddleware(
   if (!firebaseConfigured) {
     return next(
       new UnauthorizedError(
-        'Firebase Admin is not configured on the server',
+        'Firebase project id is not configured on the server',
         'AUTH_NOT_CONFIGURED',
       ),
     );
   }
-
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     return next(new UnauthorizedError('Missing or invalid authorization header'));
   }
-
-  const firebaseAuth = getFirebaseAuth();
-  const idToken = authHeader.slice(7);
   try {
-    const decoded = await firebaseAuth.verifyIdToken(idToken);
-
-    let email = decoded.email ?? '';
-    const displayName = decoded.name ?? '';
-    const photoUrl = decoded.picture;
-
-    if (!email) {
-      const fbUser = await firebaseAuth.getUser(decoded.uid);
-      email = fbUser.email ?? '';
-    }
-    if (!email) email = `${decoded.uid}@noemail.firebase`;
-
-    const user = await userRepository.findOrCreateByFirebase({
-      firebaseUid: decoded.uid,
-      email,
-      displayName,
-      photoUrl,
-    });
-
-    req.user = {
-      userId: user._id.toString(),
-      email: user.email,
-      firebaseUid: user.firebaseUid,
-      displayName: user.displayName,
-      photoUrl: user.photoUrl,
-    };
+    await attachUserFromToken(req, authHeader.slice(7));
     next();
   } catch (err) {
-    logger.warn('Firebase token verification failed', { err });
+    logger.warn('Firebase token verification failed', {
+      err: err instanceof Error ? err.message : err,
+    });
     next(new UnauthorizedError('Invalid or expired token', 'TOKEN_INVALID'));
   }
 }
 
 /**
- * Variant for routes that work for both signed-in and anonymous callers.
- * If a valid Bearer token is present, `req.user` is populated. Otherwise the
- * request passes through unauthenticated — downstream handlers should look
- * at the `X-Anon-Token` header for the localStorage-issued anonymous id.
- *
- * When Firebase isn't configured we silently skip token verification —
- * anonymous voters can still use the board.
+ * For routes that work for both signed-in and anonymous callers. Populates
+ * `req.user` if a valid token is present; otherwise leaves it undefined and
+ * lets the handler fall back to the `X-Anon-Token` header.
  */
 export async function optionalAuthMiddleware(
   req: Request,
@@ -85,31 +93,12 @@ export async function optionalAuthMiddleware(
 ): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ') || !firebaseConfigured) return next();
-
-  const firebaseAuth = getFirebaseAuth();
-  const idToken = authHeader.slice(7);
   try {
-    const decoded = await firebaseAuth.verifyIdToken(idToken);
-    let email = decoded.email ?? '';
-    if (!email) {
-      const fbUser = await firebaseAuth.getUser(decoded.uid);
-      email = fbUser.email ?? `${decoded.uid}@noemail.firebase`;
-    }
-    const user = await userRepository.findOrCreateByFirebase({
-      firebaseUid: decoded.uid,
-      email,
-      displayName: decoded.name ?? '',
-      photoUrl: decoded.picture,
-    });
-    req.user = {
-      userId: user._id.toString(),
-      email: user.email,
-      firebaseUid: user.firebaseUid,
-      displayName: user.displayName,
-      photoUrl: user.photoUrl,
-    };
+    await attachUserFromToken(req, authHeader.slice(7));
   } catch (err) {
-    logger.debug('optionalAuth: token rejected, continuing anonymous', { err });
+    logger.debug('optionalAuth: token rejected, continuing anonymous', {
+      err: err instanceof Error ? err.message : err,
+    });
   }
   next();
 }
