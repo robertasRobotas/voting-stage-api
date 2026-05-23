@@ -3,7 +3,8 @@ import mongoose from 'mongoose';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors/index.js';
 import { VotingStatus } from '../../common/constants/enums.js';
 import * as votingRepo from './voting.repository.js';
-import type { IVoting } from './voting.schema.js';
+import { VotingModel, type IVoting } from './voting.schema.js';
+import { VoteModel } from '../vote/vote.schema.js';
 import type { CreateVotingInput, UpdateSettingsInput } from './voting.schemas.js';
 
 export async function createVoting(
@@ -68,13 +69,19 @@ export async function resume(id: string, userId: string): Promise<IVoting> {
   return v;
 }
 
+/**
+ * Returns the prior invitedEmails snapshot too, so the caller (controller →
+ * email service) can figure out which addresses are *newly* invited and
+ * trigger only those notifications.
+ */
 export async function updateSettings(
   id: string,
   userId: string,
   input: UpdateSettingsInput,
-): Promise<IVoting> {
+): Promise<{ voting: IVoting; previousInvitedEmails: string[] }> {
   const v = await getById(id);
   assertOwner(v, userId);
+  const previousInvitedEmails = [...v.invitedEmails];
   if (input.title !== undefined) v.title = input.title;
   if (input.description !== undefined) v.description = input.description;
   if (input.access !== undefined) v.access = input.access;
@@ -82,7 +89,7 @@ export async function updateSettings(
     v.invitedEmails = input.invitedEmails.map((e) => e.toLowerCase());
   }
   await v.save();
-  return v;
+  return { voting: v, previousInvitedEmails };
 }
 
 export async function addItem(
@@ -116,7 +123,11 @@ export async function updateItem(
   const item = v.items.find((i) => i.id === itemId);
   if (!item) throw new NotFoundError('Item not found', 'ITEM_NOT_FOUND');
   if (input.title !== undefined) item.title = input.title;
-  if (input.imageUrl !== undefined) item.imageUrl = input.imageUrl;
+  // Explicit `null`/empty maps to clearing the image. Service callers pass
+  // `undefined` to mean "don't touch", so be careful with this distinction.
+  if (input.imageUrl !== undefined) {
+    item.imageUrl = input.imageUrl || undefined;
+  }
   await v.save();
   return v;
 }
@@ -128,4 +139,37 @@ export async function removeItem(id: string, userId: string, itemId: string): Pr
   v.items.forEach((i, idx) => (i.order = idx));
   await v.save();
   return v;
+}
+
+export async function reorderItems(
+  id: string,
+  userId: string,
+  itemIds: string[],
+): Promise<IVoting> {
+  const v = await getById(id);
+  assertOwner(v, userId);
+  const known = new Set(v.items.map((i) => i.id));
+  if (itemIds.length !== known.size || !itemIds.every((id) => known.has(id))) {
+    throw new ValidationError('itemIds must contain every existing item exactly once');
+  }
+  const byId = new Map(v.items.map((i) => [i.id, i] as const));
+  v.items = itemIds.map((id, idx) => {
+    const item = byId.get(id)!;
+    item.order = idx;
+    return item;
+  });
+  await v.save();
+  return v;
+}
+
+/**
+ * Drops the board and every vote that was cast on it. We don't soft-delete:
+ * a board with leaked share link can stay reachable forever, so a hard delete
+ * is the safer default.
+ */
+export async function deleteVoting(id: string, userId: string): Promise<void> {
+  const v = await getById(id);
+  assertOwner(v, userId);
+  await VoteModel.deleteMany({ votingId: v._id });
+  await VotingModel.deleteOne({ _id: v._id });
 }

@@ -1,9 +1,23 @@
 import { z } from 'zod';
 import { VotingAccess } from '../../common/constants/enums.js';
 
+/**
+ * Stricter URL guard than plain `z.string().url()` — only http(s), bounded
+ * length. Empty string is normalized to undefined so the form can clear an
+ * image without an explicit null.
+ */
+const imageUrlSchema = z
+  .string()
+  .trim()
+  .max(2048)
+  .url()
+  .refine((u) => /^https?:\/\//i.test(u), { message: 'imageUrl must be http(s)' })
+  .optional()
+  .or(z.literal('').transform(() => undefined));
+
 export const itemInputSchema = z.object({
   title: z.string().trim().min(1).max(200),
-  imageUrl: z.string().url().max(2048).optional().or(z.literal('').transform(() => undefined)),
+  imageUrl: imageUrlSchema,
 });
 
 export const createVotingSchema = z.object({
@@ -25,3 +39,9 @@ export type UpdateSettingsInput = z.infer<typeof updateSettingsSchema>;
 
 export const addItemSchema = itemInputSchema;
 export const updateItemSchema = itemInputSchema.partial();
+
+export const reorderItemsSchema = z.object({
+  /** Full ordered list of item ids. Must match the board's current items. */
+  itemIds: z.array(z.string().min(1)).min(1).max(200),
+});
+export type ReorderItemsInput = z.infer<typeof reorderItemsSchema>;

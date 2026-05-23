@@ -7,21 +7,19 @@ import {
   updateSettingsSchema,
   addItemSchema,
   updateItemSchema,
+  reorderItemsSchema,
 } from './voting.schemas.js';
 
 const router = Router();
 
-// Owner endpoints
 router.post('/', authMiddleware, validate(createVotingSchema), votingController.create);
 router.get('/', authMiddleware, votingController.listMine);
 
-// Public-by-shareId. Auth is optional so the same handler powers signed-in
-// owners (who get results + invite list) and anonymous voters.
 router.get('/share/:shareId', optionalAuthMiddleware, votingController.getPublic);
 
-// Lifecycle (owner-only — assertion lives in the service)
 router.post('/:id/finish', authMiddleware, votingController.finish);
 router.post('/:id/resume', authMiddleware, votingController.resume);
+router.delete('/:id', authMiddleware, votingController.remove);
 
 router.patch(
   '/:id/settings',
@@ -38,5 +36,11 @@ router.patch(
   votingController.updateItem,
 );
 router.delete('/:id/items/:itemId', authMiddleware, votingController.removeItem);
+router.post(
+  '/:id/items/reorder',
+  authMiddleware,
+  validate(reorderItemsSchema),
+  votingController.reorderItems,
+);
 
 export default router;

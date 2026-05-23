@@ -13,6 +13,11 @@ const envSchema = z.object({
   CORS_ORIGIN: z.string().default('*'),
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
   APP_URL: z.string().default('http://localhost:3000'),
+
+  // Email is optional — when RESEND_API_KEY is unset we log invites instead
+  // of sending them, so the rest of the app stays usable.
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().default('Voting Stage <onboarding@resend.dev>'),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -23,9 +28,7 @@ if (!parsed.success) {
 }
 
 if (parsed.data.NODE_ENV === 'production' && parsed.data.CORS_ORIGIN === '*') {
-  console.error(
-    'CORS_ORIGIN cannot be "*" in production - set it to your frontend domain',
-  );
+  console.error('CORS_ORIGIN cannot be "*" in production - set it to your frontend domain');
   process.exit(1);
 }
 

@@ -1,6 +1,5 @@
 import mongoose from 'mongoose';
 import {
-  ConflictError,
   ForbiddenError,
   NotFoundError,
   ValidationError,
@@ -36,18 +35,26 @@ function validateAllocations(
       throw new ValidationError(`Duplicate allocation for item ${a.itemId}`);
     }
     if (seenPoints.has(a.points)) {
-      throw new ValidationError(`Each Eurovision point value may only be used once (duplicate: ${a.points})`);
+      throw new ValidationError(
+        `Each Eurovision point value may only be used once (duplicate: ${a.points})`,
+      );
     }
     seenItems.add(a.itemId);
     seenPoints.add(a.points);
   }
 }
 
+/**
+ * Upsert a vote — first call creates, later calls replace the allocation in
+ * place. This is the "or just opens previous session" half of the spec: a
+ * voter who returns to a board they've already voted on can change their
+ * ballot any time before the board is finished.
+ */
 export async function castVote(
   votingIdOrShare: string,
   identity: VoterIdentity,
   input: CastVoteInput,
-): Promise<IVote> {
+): Promise<{ vote: IVote; updated: boolean }> {
   const voting = await votingRepo.findByIdOrShareId(votingIdOrShare);
   if (!voting) throw new NotFoundError('Voting not found', 'VOTING_NOT_FOUND');
   if (voting.status !== VotingStatus.OPEN) {
@@ -74,9 +81,17 @@ export async function castVote(
     userId: identity.userId,
     anonToken: identity.anonToken,
   });
-  if (existing) throw new ConflictError('You have already voted on this board', 'ALREADY_VOTED');
 
-  return voteRepo.create({
+  if (existing) {
+    existing.allocations = input.allocations;
+    if (identity.displayName) existing.voterName = identity.displayName;
+    else if (input.voterName !== undefined) existing.voterName = input.voterName;
+    if (identity.email) existing.voterEmail = identity.email.toLowerCase();
+    await existing.save();
+    return { vote: existing, updated: true };
+  }
+
+  const created = await voteRepo.create({
     votingId: voting._id,
     userId: identity.userId ? new mongoose.Types.ObjectId(identity.userId) : undefined,
     anonToken: identity.anonToken,
@@ -84,16 +99,16 @@ export async function castVote(
     voterName: identity.displayName ?? input.voterName,
     allocations: input.allocations,
   });
+  return { vote: created, updated: false };
 }
 
-export async function hasVoted(
+export async function getMyVote(
   votingIdOrShare: string,
   identity: { userId?: string; anonToken?: string },
-): Promise<boolean> {
+): Promise<IVote | null> {
   const voting = await votingRepo.findByIdOrShareId(votingIdOrShare);
-  if (!voting) return false;
-  const v = await voteRepo.findExisting(voting._id.toString(), identity);
-  return !!v;
+  if (!voting) return null;
+  return voteRepo.findExisting(voting._id.toString(), identity);
 }
 
 export interface VotingResults {
@@ -101,21 +116,21 @@ export interface VotingResults {
   perItem: Array<{
     itemId: string;
     totalPoints: number;
-    /** Number of voters who placed this item somewhere in their top ladder. */
     voteCount: number;
-    /** Breakdown of how often each point value was given to this item. */
     pointsBreakdown: Record<string, number>;
   }>;
 }
 
 export async function getResults(votingId: string): Promise<VotingResults> {
   const votes = await voteRepo.listByVoting(votingId);
-  const perItem = new Map<string, { totalPoints: number; voteCount: number; breakdown: Record<string, number> }>();
+  const perItem = new Map<
+    string,
+    { totalPoints: number; voteCount: number; breakdown: Record<string, number> }
+  >();
 
   for (const v of votes) {
     for (const a of v.allocations) {
-      const entry =
-        perItem.get(a.itemId) ?? { totalPoints: 0, voteCount: 0, breakdown: {} };
+      const entry = perItem.get(a.itemId) ?? { totalPoints: 0, voteCount: 0, breakdown: {} };
       entry.totalPoints += a.points;
       entry.voteCount += 1;
       entry.breakdown[a.points.toString()] = (entry.breakdown[a.points.toString()] ?? 0) + 1;
@@ -134,6 +149,37 @@ export async function getResults(votingId: string): Promise<VotingResults> {
       }))
       .sort((a, b) => b.totalPoints - a.totalPoints),
   };
+}
+
+export interface VoterRecord {
+  voteId: string;
+  voterName?: string;
+  voterEmail?: string;
+  isSignedIn: boolean;
+  isAnonymous: boolean;
+  /** Per-item allocation; itemId → points. */
+  allocations: Array<{ itemId: string; points: number }>;
+  castAt: Date;
+}
+
+/**
+ * Owner-only voter list: who has voted, when, and what they gave each item.
+ * Combined with the board's `invitedEmails` it lets the owner see who's
+ * missing from an invite-only board.
+ */
+export async function listVoters(votingId: string): Promise<VoterRecord[]> {
+  const votes = await voteRepo.listByVoting(votingId);
+  return votes
+    .map((v) => ({
+      voteId: v._id.toString(),
+      voterName: v.voterName,
+      voterEmail: v.voterEmail,
+      isSignedIn: !!v.userId,
+      isAnonymous: !v.userId,
+      allocations: v.allocations.map((a) => ({ itemId: a.itemId, points: a.points })),
+      castAt: v.createdAt,
+    }))
+    .sort((a, b) => a.castAt.getTime() - b.castAt.getTime());
 }
 
 export const POINT_LADDER = EUROVISION_POINTS;

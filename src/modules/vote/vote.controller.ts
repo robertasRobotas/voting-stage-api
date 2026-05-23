@@ -11,7 +11,7 @@ export async function cast(req: Request, res: Response, next: NextFunction): Pro
   try {
     const votingId = req.params.votingId;
     const anonToken = readAnonToken(req);
-    const vote = await voteService.castVote(
+    const { vote, updated } = await voteService.castVote(
       votingId,
       {
         userId: req.user?.userId,
@@ -21,10 +21,13 @@ export async function cast(req: Request, res: Response, next: NextFunction): Pro
       },
       req.body,
     );
-    sendCreated(res, {
+    const payload = {
       id: vote._id.toString(),
       allocations: vote.allocations,
-    });
+      updated,
+    };
+    if (updated) sendSuccess(res, payload, 'Ballot updated');
+    else sendCreated(res, payload);
   } catch (err) {
     next(err);
   }
@@ -34,11 +37,19 @@ export async function mine(req: Request, res: Response, next: NextFunction): Pro
   try {
     const votingId = req.params.votingId;
     const anonToken = readAnonToken(req);
-    const voted = await voteService.hasVoted(votingId, {
+    const vote = await voteService.getMyVote(votingId, {
       userId: req.user?.userId,
       anonToken: req.user ? undefined : anonToken,
     });
-    sendSuccess(res, { voted });
+    sendSuccess(res, {
+      voted: !!vote,
+      allocations: vote
+        ? vote.allocations.map((a) => ({ itemId: a.itemId, points: a.points }))
+        : [],
+      voterName: vote?.voterName,
+      castAt: vote?.createdAt,
+      updatedAt: vote?.updatedAt,
+    });
   } catch (err) {
     next(err);
   }
