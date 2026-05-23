@@ -27,9 +27,4 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-if (parsed.data.NODE_ENV === 'production' && parsed.data.CORS_ORIGIN === '*') {
-  console.error('CORS_ORIGIN cannot be "*" in production - set it to your frontend domain');
-  process.exit(1);
-}
-
 export const env = parsed.data;
