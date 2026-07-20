@@ -3,6 +3,7 @@ import {
   createVotingSchema,
   itemInputSchema,
   reorderItemsSchema,
+  updateItemSchema,
   updateSettingsSchema,
 } from './voting.schemas.js';
 
@@ -55,6 +56,30 @@ describe('itemInputSchema', () => {
       title: 'A',
       imageUrl: 'https://example.com/pic.jpg',
     });
+    expect(r.success).toBe(true);
+  });
+});
+
+describe('updateItemSchema', () => {
+  it('keeps empty imageUrl as empty string so the service can clear it', () => {
+    const r = updateItemSchema.safeParse({ imageUrl: '' });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.imageUrl).toBe('');
+  });
+
+  it('treats an absent imageUrl as "leave unchanged"', () => {
+    const r = updateItemSchema.safeParse({ title: 'New title' });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.imageUrl).toBeUndefined();
+  });
+
+  it('still rejects non-http(s) image URLs', () => {
+    const r = updateItemSchema.safeParse({ imageUrl: 'javascript:alert(1)' });
+    expect(r.success).toBe(false);
+  });
+
+  it('accepts a valid https image URL', () => {
+    const r = updateItemSchema.safeParse({ imageUrl: 'https://example.com/pic.jpg' });
     expect(r.success).toBe(true);
   });
 });

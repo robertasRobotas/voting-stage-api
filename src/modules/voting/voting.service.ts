@@ -83,7 +83,8 @@ export async function updateSettings(
   assertOwner(v, userId);
   const previousInvitedEmails = [...v.invitedEmails];
   if (input.title !== undefined) v.title = input.title;
-  if (input.description !== undefined) v.description = input.description;
+  // Empty string clears the description; absent leaves it unchanged.
+  if (input.description !== undefined) v.description = input.description || undefined;
   if (input.access !== undefined) v.access = input.access;
   if (input.invitedEmails !== undefined) {
     v.invitedEmails = input.invitedEmails.map((e) => e.toLowerCase());

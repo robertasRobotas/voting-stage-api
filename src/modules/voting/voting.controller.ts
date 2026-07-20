@@ -60,9 +60,28 @@ export async function getPublic(req: Request, res: Response, next: NextFunction)
 
     const owner = isOwner(v, req.user?.userId);
     const showResults = owner || v.status === 'FINISHED';
-    const results = showResults ? await voteService.getResults(v._id.toString()) : undefined;
-    // Owner always sees voter list; voters only see one once it's finished.
-    const voters = showResults ? await voteService.listVoters(v._id.toString()) : undefined;
+    // Votes can reference items the owner has since deleted — drop those
+    // allocations so clients never see orphaned item ids.
+    const knownItemIds = new Set(v.items.map((i) => i.id));
+
+    let results = showResults ? await voteService.getResults(v._id.toString()) : undefined;
+    if (results) {
+      results = {
+        ...results,
+        perItem: results.perItem.filter((row) => knownItemIds.has(row.itemId)),
+      };
+    }
+
+    // Owner always sees the voter list; everyone else only once it's finished —
+    // and never with email addresses, those are for the owner's eyes only.
+    let voters = showResults ? await voteService.listVoters(v._id.toString()) : undefined;
+    if (voters) {
+      voters = voters.map((voter) => ({
+        ...voter,
+        voterEmail: owner ? voter.voterEmail : undefined,
+        allocations: voter.allocations.filter((a) => knownItemIds.has(a.itemId)),
+      }));
+    }
 
     let canVote = v.status === 'OPEN';
     if (canVote && v.access === VotingAccess.INVITE_ONLY) {

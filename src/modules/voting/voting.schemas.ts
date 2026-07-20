@@ -1,19 +1,16 @@
 import { z } from 'zod';
 import { VotingAccess } from '../../common/constants/enums.js';
 
-/**
- * Stricter URL guard than plain `z.string().url()` — only http(s), bounded
- * length. Empty string is normalized to undefined so the form can clear an
- * image without an explicit null.
- */
-const imageUrlSchema = z
+/** Stricter URL guard than plain `z.string().url()` — only http(s), bounded length. */
+const httpImageUrl = z
   .string()
   .trim()
   .max(2048)
   .url()
-  .refine((u) => /^https?:\/\//i.test(u), { message: 'imageUrl must be http(s)' })
-  .optional()
-  .or(z.literal('').transform(() => undefined));
+  .refine((u) => /^https?:\/\//i.test(u), { message: 'imageUrl must be http(s)' });
+
+/** On create, an empty string simply means "no image". */
+const imageUrlSchema = httpImageUrl.optional().or(z.literal('').transform(() => undefined));
 
 export const itemInputSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -38,7 +35,16 @@ export const updateSettingsSchema = z.object({
 export type UpdateSettingsInput = z.infer<typeof updateSettingsSchema>;
 
 export const addItemSchema = itemInputSchema;
-export const updateItemSchema = itemInputSchema.partial();
+
+/**
+ * On update, the empty string must SURVIVE parsing: `''` means "clear the
+ * image" while an absent field means "leave it unchanged". Reusing the create
+ * schema here would collapse `''` to undefined and make clearing impossible.
+ */
+export const updateItemSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+  imageUrl: httpImageUrl.or(z.literal('')).optional(),
+});
 
 export const reorderItemsSchema = z.object({
   /** Full ordered list of item ids. Must match the board's current items. */

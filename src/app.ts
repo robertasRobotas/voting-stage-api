@@ -15,6 +15,11 @@ import voteRouter from './modules/vote/vote.route.js';
 export function createApp(): express.Application {
   const app = express();
 
+  // Deployed behind a reverse proxy (Render/Fly/etc). Without this, req.ip is
+  // the proxy for every caller and express-rate-limit rejects requests that
+  // carry an X-Forwarded-For header.
+  app.set('trust proxy', 1);
+
   app.use(helmet({ crossOriginResourcePolicy: false }));
 
   app.use(

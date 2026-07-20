@@ -91,15 +91,42 @@ export async function castVote(
     return { vote: existing, updated: true };
   }
 
-  const created = await voteRepo.create({
-    votingId: voting._id,
-    userId: identity.userId ? new mongoose.Types.ObjectId(identity.userId) : undefined,
-    anonToken: identity.anonToken,
-    voterEmail: identity.email?.toLowerCase(),
-    voterName: identity.displayName ?? input.voterName,
-    allocations: input.allocations,
-  });
-  return { vote: created, updated: false };
+  try {
+    const created = await voteRepo.create({
+      votingId: voting._id,
+      userId: identity.userId ? new mongoose.Types.ObjectId(identity.userId) : undefined,
+      anonToken: identity.anonToken,
+      voterEmail: identity.email?.toLowerCase(),
+      voterName: identity.displayName ?? input.voterName,
+      allocations: input.allocations,
+    });
+    return { vote: created, updated: false };
+  } catch (err) {
+    // Two concurrent first-time submits can race past findExisting; the unique
+    // (votingId, userId/anonToken) index rejects the loser — treat it as an
+    // update instead of surfacing a 500.
+    if (isDuplicateKeyError(err)) {
+      const winner = await voteRepo.findExisting(voting._id.toString(), {
+        userId: identity.userId,
+        anonToken: identity.anonToken,
+      });
+      if (winner) {
+        winner.allocations = input.allocations;
+        await winner.save();
+        return { vote: winner, updated: true };
+      }
+    }
+    throw err;
+  }
+}
+
+function isDuplicateKeyError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: unknown }).code === 11000
+  );
 }
 
 export async function getMyVote(
