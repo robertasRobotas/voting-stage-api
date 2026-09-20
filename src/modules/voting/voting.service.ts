@@ -69,19 +69,13 @@ export async function resume(id: string, userId: string): Promise<IVoting> {
   return v;
 }
 
-/**
- * Returns the prior invitedEmails snapshot too, so the caller (controller →
- * email service) can figure out which addresses are *newly* invited and
- * trigger only those notifications.
- */
 export async function updateSettings(
   id: string,
   userId: string,
   input: UpdateSettingsInput,
-): Promise<{ voting: IVoting; previousInvitedEmails: string[] }> {
+): Promise<IVoting> {
   const v = await getById(id);
   assertOwner(v, userId);
-  const previousInvitedEmails = [...v.invitedEmails];
   if (input.title !== undefined) v.title = input.title;
   // Empty string clears the description; absent leaves it unchanged.
   if (input.description !== undefined) v.description = input.description || undefined;
@@ -90,7 +84,7 @@ export async function updateSettings(
     v.invitedEmails = input.invitedEmails.map((e) => e.toLowerCase());
   }
   await v.save();
-  return { voting: v, previousInvitedEmails };
+  return v;
 }
 
 export async function addItem(

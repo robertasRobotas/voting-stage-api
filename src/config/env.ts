@@ -12,12 +12,6 @@ const envSchema = z.object({
   FIREBASE_PROJECT_ID: z.string().optional(),
   CORS_ORIGIN: z.string().default('*'),
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
-  APP_URL: z.string().default('http://localhost:3000'),
-
-  // Email is optional — when RESEND_API_KEY is unset we log invites instead
-  // of sending them, so the rest of the app stays usable.
-  RESEND_API_KEY: z.string().optional(),
-  EMAIL_FROM: z.string().default('Voting Stage <onboarding@resend.dev>'),
 });
 
 const parsed = envSchema.safeParse(process.env);

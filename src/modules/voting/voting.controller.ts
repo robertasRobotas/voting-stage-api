@@ -3,7 +3,6 @@ import { sendSuccess, sendCreated } from '../../common/utils/response.util.js';
 import { HTTP_STATUS } from '../../common/constants/index.js';
 import * as votingService from './voting.service.js';
 import * as voteService from '../vote/vote.service.js';
-import * as inviteEmail from '../email/invite-email.service.js';
 import { VotingAccess } from '../../common/constants/enums.js';
 import type { IVoting } from './voting.schema.js';
 
@@ -35,9 +34,6 @@ function toPublicDto(v: IVoting, viewerUserId?: string) {
 export async function create(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const v = await votingService.createVoting(req.user!.userId, req.user!.email, req.body);
-    if (v.access === VotingAccess.INVITE_ONLY && v.invitedEmails.length > 0) {
-      void inviteEmail.sendInvites(v, v.invitedEmails, { ownerEmail: req.user!.email });
-    }
     sendCreated(res, toPublicDto(v, req.user!.userId));
   } catch (err) {
     next(err);
@@ -119,19 +115,8 @@ export async function updateSettings(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const { voting, previousInvitedEmails } = await votingService.updateSettings(
-      req.params.id,
-      req.user!.userId,
-      req.body,
-    );
-    if (voting.access === VotingAccess.INVITE_ONLY) {
-      const previous = new Set(previousInvitedEmails);
-      const newlyInvited = voting.invitedEmails.filter((e) => !previous.has(e));
-      if (newlyInvited.length > 0) {
-        void inviteEmail.sendInvites(voting, newlyInvited, { ownerEmail: req.user!.email });
-      }
-    }
-    sendSuccess(res, toPublicDto(voting, req.user!.userId));
+    const v = await votingService.updateSettings(req.params.id, req.user!.userId, req.body);
+    sendSuccess(res, toPublicDto(v, req.user!.userId));
   } catch (err) {
     next(err);
   }
